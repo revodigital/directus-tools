@@ -1,0 +1,27 @@
+{
+  "name": "@revodigital/directus-tools",
+  "version": "1.0.0",
+  "description": "CLI tools for Directus projects: config sync and snapshot semantic diff",
+  "type": "module",
+  "bin": {
+    "directus-sync": "./bin/directus-sync.mjs",
+    "directus-diff": "./bin/directus-diff.mjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "yaml": "^2.6.0"
+  },
+  "keywords": [
+    "directus",
+    "cli",
+    "sync",
+    "snapshot",
+    "diff"
+  ],
+  "license": "MIT"
+}
