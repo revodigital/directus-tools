@@ -25,6 +25,8 @@ bun add -d @revodigital/directus-tools
 
 Export / import Directus config between environments. Handles UUID remapping automatically (matches entities by name, not UUID).
 
+> **Note:** `npx directus-sync` resolves to the local binary when the package is installed as a dev dependency (recommended). For one-off use without installing, run `npx --package=@revodigital/directus-tools directus-sync` instead.
+
 ### Export
 
 ```bash
@@ -77,6 +79,8 @@ Or create a static token under **Settings → Access Tokens**.
 ## directus-diff
 
 Semantic diff of two Directus snapshot YAML files. Ignores key order, array order, and YAML formatting — shows only real value changes.
+
+> **Note:** Same as above — use `npx directus-diff` when installed locally, or `npx --package=@revodigital/directus-tools directus-diff` for one-off use.
 
 ```bash
 # Defaults: snapshots/snapshot.yaml vs snapshots/snapshot-export.yaml (relative to cwd)
