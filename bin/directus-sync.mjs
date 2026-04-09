@@ -137,11 +137,17 @@ async function doExport(baseUrl, token, outDir, only) {
   }
 
   // directus_access — junction: links roles (or users) to policies
+  // Only export role-based assignments (user === null).
+  // User-specific entries reference a user UUID that won't exist on the target instance.
   if (only.includes('access')) {
     const access = await getSystemAll(baseUrl, token, 'access', [
       'id', 'role', 'user', 'policy', 'sort',
     ]);
-    saveJson(outDir, 'access', access);
+    const roleAccess = access.filter(a => a.user === null);
+    if (roleAccess.length < access.length) {
+      console.log(`  ⚠ filtered out ${access.length - roleAccess.length} user-specific access entries`);
+    }
+    saveJson(outDir, 'access', roleAccess);
   }
 
   // Permissions — attached to policies in Directus 11
