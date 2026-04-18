@@ -205,6 +205,33 @@ async function doExport(baseUrl, token, outDir, only) {
 
 // ─── import ───────────────────────────────────────────────────────────────────
 
+/**
+ * Remap cross-references inside an operation's `options` payload.
+ *
+ * The `trigger` operation type (Directus' "Trigger Flow" node) stores the id
+ * of the flow it should fire at `options.flow`. That id is a SOURCE-env UUID
+ * in the JSON; on the target env, flows are matched by name and either get a
+ * fresh UUID (first import) or the target env's existing UUID. Without this
+ * remap the imported trigger op keeps pointing at the source UUID and
+ * Directus logs `WARN: Couldn't find operation triggered flow with id "…"`
+ * at runtime.
+ *
+ * Other op types don't embed foreign UUIDs in `options` today (item-* embed a
+ * collection name; exec embeds code; mail embeds a template string). If a
+ * future Directus version adds more, extend this helper.
+ */
+function remapOperationOptions(op, flowmap) {
+  if (!op?.options || typeof op.options !== 'object') return op?.options ?? null;
+  if (op.type === 'trigger' && op.options.flow) {
+    const mapped = flowmap[op.options.flow];
+    // Skip placeholder ids produced in dry-run (`[NEW:…]`) — the PATCH won't run anyway.
+    if (mapped && !String(mapped).startsWith('[')) {
+      return { ...op.options, flow: mapped };
+    }
+  }
+  return op.options;
+}
+
 async function upsertSystem(baseUrl, token, endpoint, items, matchFn, getPayload, dryRun, label) {
   console.log(`\n  → ${label} (${items.length} items)`);
   const existing = await getSystemAll(baseUrl, token, endpoint, ['*']);
@@ -432,10 +459,14 @@ async function doImport(baseUrl, token, inDir, only, dryRun) {
     for (const op of operations) {
       const targetFlowId = flowmap[op.flow] ?? op.flow;
       const found = existingOps.find(e => e.flow === targetFlowId && e.key === op.key);
+      const remappedOptions = remapOperationOptions(op, flowmap);
+      if (op.type === 'trigger' && op.options?.flow && remappedOptions?.flow !== op.options.flow) {
+        console.log(`    ↪ remapped trigger op "${op.name || op.key}" options.flow: ${op.options.flow} → ${remappedOptions.flow}`);
+      }
       const payload = {
         name: op.name, key: op.key, type: op.type,
         position_x: op.position_x, position_y: op.position_y,
-        options: op.options, flow: targetFlowId,
+        options: remappedOptions, flow: targetFlowId,
       };
       if (found) {
         opmap[op.id] = found.id;
