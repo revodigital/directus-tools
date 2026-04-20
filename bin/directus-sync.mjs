@@ -151,11 +151,26 @@ async function doExport(baseUrl, token, outDir, only) {
   }
 
   // Permissions — attached to policies in Directus 11
+  //
+  // Skip `system: true` rows. Directus exposes built-in default permissions
+  // (self-read on directus_users, self-read on directus_roles, etc.) via the
+  // /permissions endpoint with a virtual `system` flag. These are auto-created
+  // by Directus when a policy is created and MUST NOT be re-imported: they
+  // collide with any custom permission on the same (policy, collection, action)
+  // — because import matches on that composite key — and the last-write-wins
+  // ordering clobbers the custom row with the built-in default.
   if (only.includes('permissions')) {
     const permissions = await getSystemAll(baseUrl, token, 'permissions', [
-      'id', 'policy', 'collection', 'action', 'fields', 'permissions', 'validation', 'presets',
+      'id', 'policy', 'collection', 'action', 'fields', 'permissions', 'validation', 'presets', 'system',
     ]);
-    saveJson(outDir, 'permissions', permissions);
+    const custom = permissions.filter(p => p.system !== true).map(p => {
+      const { system: _sys, ...rest } = p;
+      return rest;
+    });
+    if (custom.length < permissions.length) {
+      console.log(`  ⚠ filtered out ${permissions.length - custom.length} system:true permissions (auto-created by Directus)`);
+    }
+    saveJson(outDir, 'permissions', custom);
   }
 
   // Flows + Operations
@@ -351,7 +366,16 @@ async function doImport(baseUrl, token, inDir, only, dryRun) {
 
   // 4. Permissions (linked to policies in Directus 11)
   if (only.includes('permissions')) {
-    const permissions = loadJson(inDir, 'permissions');
+    const rawPermissions = loadJson(inDir, 'permissions');
+    const systemCount = rawPermissions.filter(p => p.system === true).length;
+    // Skip `system: true` entries: these are Directus's auto-created defaults
+    // (self-read on directus_users, etc.). Importing them clobbers custom rules
+    // on the same (policy, collection, action) because that's the match key.
+    // Older export files may still contain these; silently drop them here.
+    const permissions = rawPermissions.filter(p => p.system !== true);
+    if (systemCount > 0) {
+      console.log(`  ⚠ skipping ${systemCount} system:true permission(s) from source file (auto-created by Directus)`);
+    }
     console.log(`\n  → Permissions (${permissions.length} items)`);
 
     // ⚠ Do NOT use fields=* here: Directus expands relational fields as nested objects
@@ -486,7 +510,16 @@ async function doImport(baseUrl, token, inDir, only, dryRun) {
     }
 
     // c) Wire operation resolve / reject
+    //    First clear all pointers on target ops (resolve/reject are unique in
+    //    directus_operations, so re-wiring a swapped/moved pointer 400s if the
+    //    previous owner still holds the same UUID). Two-pass: null everything
+    //    we own, then set the final values.
     if (!dryRun) {
+      for (const op of operations) {
+        const targetOpId = opmap[op.id];
+        if (!targetOpId || String(targetOpId).startsWith('[')) continue;
+        await api(baseUrl, token, 'PATCH', `/operations/${targetOpId}`, { resolve: null, reject: null });
+      }
       for (const op of operations) {
         const targetOpId = opmap[op.id];
         if (!targetOpId || String(targetOpId).startsWith('[')) continue;
