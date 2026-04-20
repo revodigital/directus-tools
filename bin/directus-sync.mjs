@@ -479,6 +479,27 @@ async function doImport(baseUrl, token, inDir, only, dryRun) {
       }
     }
 
+    // b0) Pre-clear resolve/reject on every existing op whose flow we manage.
+    //     directus_operations.resolve and .reject are UNIQUE columns, and
+    //     Directus re-validates the constraint on EVERY PATCH — even when the
+    //     payload doesn't touch those fields. If the target DB is in a
+    //     corrupted state (two rows sharing the same resolve UUID from an
+    //     earlier partial sync), the simple name/options PATCH in pass (b)
+    //     would 400 before we ever reach the wiring pass. Nulling here gives
+    //     pass (b) and pass (c) a clean slate.
+    if (!dryRun) {
+      const managedFlowIds = new Set(
+        Object.values(flowmap).filter(id => id && !String(id).startsWith('['))
+      );
+      const toClear = existingOps.filter(e => managedFlowIds.has(e.flow));
+      for (const e of toClear) {
+        await api(baseUrl, token, 'PATCH', `/operations/${e.id}`, { resolve: null, reject: null });
+      }
+      if (toClear.length > 0) {
+        console.log(`    ↻ cleared resolve/reject on ${toClear.length} existing op(s) before upsert`);
+      }
+    }
+
     // b) Operations — omit `resolve` / `reject`
     for (const op of operations) {
       const targetFlowId = flowmap[op.flow] ?? op.flow;
@@ -509,17 +530,10 @@ async function doImport(baseUrl, token, inDir, only, dryRun) {
       }
     }
 
-    // c) Wire operation resolve / reject
-    //    First clear all pointers on target ops (resolve/reject are unique in
-    //    directus_operations, so re-wiring a swapped/moved pointer 400s if the
-    //    previous owner still holds the same UUID). Two-pass: null everything
-    //    we own, then set the final values.
+    // c) Wire operation resolve / reject. Pass (b0) already nulled all
+    //    pointers across managed flows, so uniqueness conflicts can't fire
+    //    here unless the source file has two ops pointing to the same target.
     if (!dryRun) {
-      for (const op of operations) {
-        const targetOpId = opmap[op.id];
-        if (!targetOpId || String(targetOpId).startsWith('[')) continue;
-        await api(baseUrl, token, 'PATCH', `/operations/${targetOpId}`, { resolve: null, reject: null });
-      }
       for (const op of operations) {
         const targetOpId = opmap[op.id];
         if (!targetOpId || String(targetOpId).startsWith('[')) continue;
