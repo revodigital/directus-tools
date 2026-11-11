@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * directus-sync
- * Export / import Flows, Roles, Policies, Permissions, Presets, and Styling between Directus environments.
+ * Export / import Flows, Roles, Policies, Permissions, Presets, Styling, and Translations between Directus environments.
  * Compatible with Directus 11+ (roles/policies split model).
  *
  * Usage:
@@ -30,6 +30,7 @@
  *   - Operations: matched by (flow + key)
  *   - Permissions: matched by (policy + collection + action)
  *   - Presets   : matched by (collection + user + role + bookmark)
+ *   - Translations: matched by (key + language)
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
@@ -50,7 +51,7 @@ Options:
   --in       Input directory for import  (default: ./config-export)
   --dry-run  (import only) print all operations without executing them
   --only     Comma-separated list of entities to process:
-             roles, policies, access, permissions, flows, presets, styling
+             roles, policies, access, permissions, flows, presets, styling, translations
              Default: all
 
   Styling syncs: project name/descriptor, brand color, custom CSS,
@@ -195,6 +196,16 @@ async function doExport(baseUrl, token, outDir, only) {
       'layout_query', 'layout_options', 'refresh_interval', 'bookmark', 'icon', 'color',
     ]);
     saveJson(outDir, 'presets', presets);
+  }
+
+  // Translations — custom $t:<key> lookups used in snapshot-defined notices,
+  // choice labels, group titles, field notes. Keyed by (key + language); ids
+  // regenerate on create, so the id field here is informational only.
+  if (only.includes('translations')) {
+    const translations = await getSystemAll(baseUrl, token, 'translations', [
+      'id', 'key', 'language', 'value',
+    ]);
+    saveJson(outDir, 'translations', translations);
   }
 
   // Styling — singleton at /settings
@@ -644,12 +655,45 @@ async function doImport(baseUrl, token, inDir, only, dryRun) {
     }
   }
 
+  // 8. Translations — custom $t:<key> lookups referenced from the snapshot.
+  //    No cross-references, no UUID remapping; match on (key + language).
+  if (only.includes('translations')) {
+    const translations = loadJson(inDir, 'translations');
+    console.log(`\n  → Translations (${translations.length} items)`);
+
+    const existing = await getSystemAll(baseUrl, token, 'translations', [
+      'id', 'key', 'language',
+    ]);
+
+    for (const t of translations) {
+      const found = existing.find(e => e.key === t.key && e.language === t.language);
+      const payload = { key: t.key, language: t.language, value: t.value };
+      const label = `${t.key} [${t.language}]`;
+
+      if (found) {
+        if (dryRun) {
+          console.log(`    [DRY-RUN] PATCH /translations/${found.id}  (${label})`);
+        } else {
+          await api(baseUrl, token, 'PATCH', `/translations/${found.id}`, payload);
+          console.log(`    ✓ updated: ${label}`);
+        }
+      } else {
+        if (dryRun) {
+          console.log(`    [DRY-RUN] POST /translations  (new: ${label})`);
+        } else {
+          await api(baseUrl, token, 'POST', '/translations', payload);
+          console.log(`    ✓ created: ${label}`);
+        }
+      }
+    }
+  }
+
   console.log('\n✅  Import complete.\n');
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
 
-const ALL_ENTITIES = ['roles', 'policies', 'access', 'permissions', 'flows', 'presets', 'styling'];
+const ALL_ENTITIES = ['roles', 'policies', 'access', 'permissions', 'flows', 'presets', 'styling', 'translations'];
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));

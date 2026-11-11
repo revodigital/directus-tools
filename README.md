@@ -6,7 +6,7 @@ CLI tools for Directus 11 projects. Centrally maintained, installed as a dev dep
 
 | Command | Description |
 |---|---|
-| `directus-sync` | Export / import roles, policies, permissions, flows, presets, and styling between Directus environments |
+| `directus-sync` | Export / import roles, policies, permissions, flows, presets, styling, and translations between Directus environments |
 | `directus-diff` | Semantic diff of two Directus snapshot YAML files (ignores key order and formatting) |
 
 ## Requirements
@@ -63,6 +63,7 @@ npx directus-sync import --url ... --token ... --in scripts/config/ --only roles
 | Flows + Operations | flow name / (flow + key) — 4-pass to handle circular refs |
 | Presets | collection + role + bookmark (skips user-specific presets) |
 | Styling | project name, color, custom CSS, theme overrides, module bar |
+| Translations | key + language (for custom `$t:<key>` lookups in the snapshot) |
 
 Logo and favicon are **not** synced (manage manually).
 
