@@ -92,6 +92,15 @@ async function api(baseUrl, token, method, path, body) {
   return res.json();
 }
 
+/**
+ * Directus' built-in default permissions (self-read on directus_users, etc.)
+ * are synthesized at read time: they carry `system: true` on some versions and
+ * never have a database id. Treat either signal as "system".
+ */
+function isSystemPermission(p) {
+  return p?.system === true || p?.id === null || p?.id === undefined;
+}
+
 async function getSystemAll(baseUrl, token, endpoint, fields = ['*']) {
   const params = new URLSearchParams({ fields: fields.join(','), limit: '-1' });
   const res = await api(baseUrl, token, 'GET', `/${endpoint}?${params}`);
@@ -160,16 +169,22 @@ async function doExport(baseUrl, token, outDir, only) {
   // collide with any custom permission on the same (policy, collection, action)
   // — because import matches on that composite key — and the last-write-wins
   // ordering clobbers the custom row with the built-in default.
+  //
+  // ⚠ Do NOT request `system` explicitly in `fields`: it is a virtual field and
+  //   Directus >= 11.17 rejects it with 403 "You don't have permission to access
+  //   field "system" in collection directus_permissions". Without it, the API
+  //   still returns the system rows (with `id: null`, and on some versions
+  //   `system: true`), so isSystemPermission() catches them either way.
   if (only.includes('permissions')) {
     const permissions = await getSystemAll(baseUrl, token, 'permissions', [
-      'id', 'policy', 'collection', 'action', 'fields', 'permissions', 'validation', 'presets', 'system',
+      'id', 'policy', 'collection', 'action', 'fields', 'permissions', 'validation', 'presets',
     ]);
-    const custom = permissions.filter(p => p.system !== true).map(p => {
+    const custom = permissions.filter(p => !isSystemPermission(p)).map(p => {
       const { system: _sys, ...rest } = p;
       return rest;
     });
     if (custom.length < permissions.length) {
-      console.log(`  ⚠ filtered out ${permissions.length - custom.length} system:true permissions (auto-created by Directus)`);
+      console.log(`  ⚠ filtered out ${permissions.length - custom.length} system permissions (auto-created by Directus)`);
     }
     saveJson(outDir, 'permissions', custom);
   }
@@ -392,9 +407,10 @@ async function doImport(baseUrl, token, inDir, only, dryRun) {
     // ⚠ Do NOT use fields=* here: Directus expands relational fields as nested objects
     //   (e.g. policy → {id:"...", name:"..."}) which breaks the string equality match.
     //   Request only the flat scalar fields needed for matching.
-    const existing = await getSystemAll(baseUrl, token, 'permissions', [
+    // Drop synthesized system rows (no id) so we never PATCH /permissions/null.
+    const existing = (await getSystemAll(baseUrl, token, 'permissions', [
       'id', 'policy', 'collection', 'action',
-    ]);
+    ])).filter(p => !isSystemPermission(p));
 
     // Warn about unmapped policy UUIDs (happens when --only permissions is used alone)
     const unmappedPolicies = new Set();
@@ -711,7 +727,7 @@ async function main() {
 
   try {
     const info = await api(baseUrl, token, 'GET', '/server/info');
-    const version = info?.data?.directus?.version ?? '?';
+    const version = info?.data?.version ?? info?.data?.directus?.version ?? '?';
     console.log(`🔗  Connected: Directus ${version} at ${baseUrl}`);
     if (version && parseInt(version) < 11) {
       console.warn(`⚠   Warning: this script targets Directus 11+. Your version (${version}) may use a different roles/policies model.`);
